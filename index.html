@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Craft So Long to Lerne — A Chaucer Hand-Tracking Experiment</title>
+
+<!-- MediaPipe Hands via CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
+
+  :root {
+    --parchment: #f4e8c1;
+    --parchment-dark: #e6d5a8;
+    --ink: #2c1810;
+    --vermillion: #c0392b;
+    --gold: #c5961e;
+    --blue-initial: #1a4b7a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--parchment);
+    font-family: 'Cormorant Garamond', serif;
+    color: var(--ink);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Parchment texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        rgba(139, 119, 80, 0.03) 3px,
+        rgba(139, 119, 80, 0.03) 4px
+      ),
+      radial-gradient(ellipse at 20% 50%, rgba(160, 130, 80, 0.08) 0%, transparent 70%),
+      radial-gradient(ellipse at 80% 30%, rgba(120, 100, 60, 0.06) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  header {
+    text-align: center;
+    padding: 2rem 1.5rem 1rem;
+    border-bottom: 2px solid var(--gold);
+    position: relative;
+  }
+
+  header::after {
+    content: '❦';
+    display: block;
+    font-size: 1.4rem;
+    color: var(--vermillion);
+    margin-top: 0.5rem;
+  }
+
+  h1 {
+    font-family: 'UnifrakturMaguntia', cursive;
+    font-size: clamp(1.6rem, 4vw, 2.8rem);
+    color: var(--ink);
+    font-weight: normal;
+    letter-spacing: 0.02em;
+  }
+
+  h1 .initial {
+    color: var(--vermillion);
+    font-size: 1.3em;
+  }
+
+  .subtitle {
+    font-style: italic;
+    font-size: 1.05rem;
+    color: var(--gold);
+    margin-top: 0.3rem;
+  }
+
+  /* Main area */
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 1.5rem;
+  }
+
+  /* Camera section */
+  .camera-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    border: 3px solid var(--gold);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px var(--parchment-dark),
+      0 0 0 4px var(--ink),
+      0 8px 32px rgba(44, 24, 16, 0.25);
+    background: #111;
+    aspect-ratio: 4/3;
+  }
+
+  .camera-wrapper canvas,
+  .camera-wrapper video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  video { transform: scaleX(-1); }
+  #output-canvas { transform: scaleX(-1); z-index: 2; }
+
+  /* Status bar */
+  .status-bar {
+    text-align: center;
+    margin-top: 1rem;
+    font-size: 1rem;
+    color: var(--ink);
+    opacity: 0.75;
+  }
+
+  .status-bar .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--vermillion);
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: pulse 2s infinite;
+  }
+
+  .status-bar.active .dot { background: #27ae60; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Current quote display */
+  .quote-display {
+    text-align: center;
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border-top: 1px solid rgba(197, 150, 30, 0.4);
+    border-bottom: 1px solid rgba(197, 150, 30, 0.4);
+  }
+
+  .quote-display .current-quote {
+    font-family: 'UnifrakturMaguntia', cursive;
+    font-size: clamp(1.1rem, 3vw, 1.6rem);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+
+  .quote-display .instruction {
+    font-style: italic;
+    font-size: 0.95rem;
+    color: var(--gold);
+    margin-top: 0.4rem;
+  }
+
+  /* Intro / instructions panel */
+  .intro-panel {
+    background: linear-gradient(135deg, rgba(197,150,30,0.07) 0%, rgba(192,57,43,0.04) 100%);
+    border: 1px solid rgba(197,150,30,0.3);
+    border-radius: 4px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .intro-panel h2 {
+    font-family: 'UnifrakturMaguntia', cursive;
+    font-size: 1.4rem;
+    color: var(--vermillion);
+    margin-bottom: 0.6rem;
+    font-weight: normal;
+  }
+
+  .intro-panel p {
+    line-height: 1.7;
+    font-size: 1.05rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .intro-panel .step {
+    display: flex;
+    gap: 0.7rem;
+    align-items: baseline;
+    margin: 0.4rem 0;
+    font-size: 1.02rem;
+    line-height: 1.6;
+  }
+
+  .intro-panel .step-num {
+    font-family: 'UnifrakturMaguntia', cursive;
+    color: var(--vermillion);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .btn-start {
+    display: block;
+    margin: 1.2rem auto 0;
+    padding: 0.8rem 2.4rem;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--parchment);
+    background: var(--ink);
+    border: 2px solid var(--gold);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.3s;
+    letter-spacing: 0.04em;
+  }
+
+  .btn-start:hover {
+    background: var(--vermillion);
+    border-color: var(--vermillion);
+  }
+
+  .btn-start:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 1.5rem;
+    font-size: 0.9rem;
+    color: rgba(44, 24, 16, 0.5);
+    border-top: 1px solid rgba(197, 150, 30, 0.25);
+    margin-top: 2rem;
+  }
+
+  footer a { color: var(--blue-initial); }
+
+  /* Shake indicator */
+  .shake-indicator {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: rgba(44, 24, 16, 0.75);
+    color: var(--parchment);
+    padding: 0.3rem 0.9rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    font-style: italic;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
+  .shake-indicator.visible { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="initial">T</span>he Craft So Long to Lerne</h1>
+  <div class="subtitle">A hand-tracking experiment with Chaucer</div>
+</header>
+
+<div class="container">
+
+  <div class="intro-panel">
+    <h2>How It Works</h2>
+    <p>This page uses your webcam to track your hands. Raise both hands, spread your fingers, and watch Chaucer's words appear at your fingertips.</p>
+    <div class="step"><span class="step-num">I.</span><span>Click <strong>Open camera</strong> below to grant camera access.</span></div>
+    <div class="step"><span class="step-num">II.</span><span>Raise both hands with fingers spread — one word appears per fingertip.</span></div>
+    <div class="step"><span class="step-num">III.</span><span>Shake your hands to change the quote!</span></div>
+    <p style="margin-top:0.6rem; font-style:italic; color:var(--gold);">Your camera feed never leaves your device. All processing happens in your browser.</p>
+    <button class="btn-start" id="startBtn" onclick="startCamera()">Open camera</button>
+  </div>
+
+  <div class="camera-wrapper" id="cameraWrapper" style="display:none;">
+    <video id="webcam" playsinline></video>
+    <canvas id="output-canvas"></canvas>
+    <div class="shake-indicator" id="shakeIndicator">✦ Quote changed! ✦</div>
+  </div>
+
+  <div class="status-bar" id="statusBar" style="display:none;">
+    <span class="dot"></span>
+    <span id="statusText">Waiting for hands…</span>
+  </div>
+
+  <div class="quote-display" id="quoteDisplay" style="display:none;">
+    <div class="current-quote" id="currentQuoteText"></div>
+    <div class="instruction">Shake both hands vigorously to change the verse</div>
+  </div>
+
+</div>
+
+<footer>
+  Built with MediaPipe Hands · No data leaves your browser
+  <br>
+  <a href="https://github.com/nicedayforgithub" target="_blank">View the source on GitHub</a>
+</footer>
+
+<script>
+/* ===============================================================
+   CONFIGURATION — EDIT YOUR QUOTES HERE
+   ===============================================================
+   Each quote is an array of exactly 10 words (one per fingertip).
+   Fingertip order: left pinky → left thumb, right thumb → right pinky.
+
+   To change the text, simply edit the words inside the arrays below.
+   Keep each array at exactly 10 words for best results.
+   =============================================================== */
+const QUOTES = [
+  // Quote 0 — Chaucer, The Parliament of Fowls
+  ["The", "lyf", "so", "short,", "the", "craft", "so", "long", "to", "lerne."],
+  // Quote 1 — Community response
+  ["With", "a", "community,", "not", "so", "long", "at", "all!", "✦", "✦"],
+];
+/* ===============================================================
+   END CONFIGURATION
+   =============================================================== */
+
+let currentQuoteIndex = 0;
+let handsInstance = null;
+let cameraInstance = null;
+
+// Shake detection state
+const shakeHistory = [];
+const SHAKE_WINDOW = 500;    // ms to look back
+const SHAKE_THRESHOLD = 0.12; // minimum movement per frame to count
+const SHAKE_COUNT = 5;        // number of big movements needed
+let lastWristPositions = null;
+let shakeCooldown = false;
+
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('output-canvas');
+const ctx = canvas.getContext('2d');
+
+function updateQuoteDisplay() {
+  const el = document.getElementById('currentQuoteText');
+  el.textContent = QUOTES[currentQuoteIndex].join(' ');
+}
+
+function showShakeIndicator() {
+  const el = document.getElementById('shakeIndicator');
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 1500);
+}
+
+function detectShake(results) {
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 1) {
+    lastWristPositions = null;
+    shakeHistory.length = 0;
+    return;
+  }
+
+  // Use wrist landmarks (index 0) from all detected hands
+  const wrists = results.multiHandLandmarks.map(lm => ({ x: lm[0].x, y: lm[0].y }));
+
+  if (lastWristPositions && wrists.length === lastWristPositions.length) {
+    let maxDelta = 0;
+    for (let i = 0; i < wrists.length; i++) {
+      const dx = Math.abs(wrists[i].x - lastWristPositions[i].x);
+      const dy = Math.abs(wrists[i].y - lastWristPositions[i].y);
+      maxDelta = Math.max(maxDelta, dx + dy);
+    }
+
+    const now = Date.now();
+    if (maxDelta > SHAKE_THRESHOLD) {
+      shakeHistory.push(now);
+    }
+
+    // Clean old entries
+    while (shakeHistory.length > 0 && shakeHistory[0] < now - SHAKE_WINDOW) {
+      shakeHistory.shift();
+    }
+
+    if (shakeHistory.length >= SHAKE_COUNT && !shakeCooldown) {
+      // SHAKE DETECTED
+      shakeCooldown = true;
+      currentQuoteIndex = (currentQuoteIndex + 1) % QUOTES.length;
+      updateQuoteDisplay();
+      showShakeIndicator();
+      shakeHistory.length = 0;
+      setTimeout(() => { shakeCooldown = false; }, 1500);
+    }
+  }
+
+  lastWristPositions = wrists;
+}
+
+// Fingertip landmark indices in MediaPipe Hands
+// Thumb=4, Index=8, Middle=12, Ring=16, Pinky=20
+const FINGERTIP_IDS = [4, 8, 12, 16, 20];
+
+function onResults(results) {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw camera image (already drawn by video element, canvas overlays text)
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+  const statusBar = document.getElementById('statusBar');
+  const statusText = document.getElementById('statusText');
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    statusBar.classList.remove('active');
+    statusText.textContent = 'Waiting for hands…';
+    lastWristPositions = null;
+    return;
+  }
+
+  statusBar.classList.add('active');
+  const handCount = results.multiHandLandmarks.length;
+  statusText.textContent = handCount === 2
+    ? 'Both hands detected — showing verse'
+    : 'One hand detected — raise both hands';
+
+  detectShake(results);
+
+  // Sort hands into left and right using handedness
+  let leftHand = null, rightHand = null;
+  for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+    const label = results.multiHandedness[i].label; // "Left" or "Right"
+    // MediaPipe labels are mirrored (camera mirror), so "Left" in results = user's right hand
+    if (label === 'Left') rightHand = results.multiHandLandmarks[i];
+    else leftHand = results.multiHandLandmarks[i];
+  }
+
+  // If only one hand, try to show something
+  if (handCount === 1) {
+    const hand = results.multiHandLandmarks[0];
+    const label = results.multiHandedness[0].label;
+    const isRight = label === 'Left'; // mirrored
+    const offset = isRight ? 5 : 0;
+    const words = QUOTES[currentQuoteIndex];
+
+    FINGERTIP_IDS.forEach((tipId, idx) => {
+      const lm = hand[tipId];
+      const wordIdx = offset + idx;
+      if (wordIdx < words.length) {
+        drawWord(lm.x * canvas.width, lm.y * canvas.height, words[wordIdx]);
+      }
+    });
+    return;
+  }
+
+  // Two hands — full quote
+  const words = QUOTES[currentQuoteIndex];
+
+  // Left hand: words 0–4 (pinky to thumb → indices reversed: pinky=20,ring=16,mid=12,idx=8,thumb=4)
+  if (leftHand) {
+    const leftOrder = [20, 16, 12, 8, 4]; // pinky to thumb
+    leftOrder.forEach((tipId, idx) => {
+      const lm = leftHand[tipId];
+      if (idx < words.length) {
+        drawWord(lm.x * canvas.width, lm.y * canvas.height, words[idx]);
+      }
+    });
+  }
+
+  // Right hand: words 5–9 (thumb to pinky)
+  if (rightHand) {
+    const rightOrder = [4, 8, 12, 16, 20]; // thumb to pinky
+    rightOrder.forEach((tipId, idx) => {
+      const lm = rightHand[tipId];
+      const wordIdx = 5 + idx;
+      if (wordIdx < words.length) {
+        drawWord(lm.x * canvas.width, lm.y * canvas.height, words[wordIdx]);
+      }
+    });
+  }
+}
+
+function drawWord(x, y, word) {
+  const fontSize = Math.max(16, Math.min(canvas.width * 0.032, 28));
+
+  ctx.save();
+
+  // Background pill
+  ctx.font = `600 ${fontSize}px 'Cormorant Garamond', serif`;
+  const metrics = ctx.measureText(word);
+  const padding = fontSize * 0.4;
+  const pillW = metrics.width + padding * 2;
+  const pillH = fontSize * 1.5;
+  const pillX = x - pillW / 2;
+  const pillY = y - pillH - 8;
+
+  // Shadow
+  ctx.shadowColor = 'rgba(44, 24, 16, 0.5)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 2;
+
+  // Parchment-colored pill
+  ctx.fillStyle = 'rgba(244, 232, 193, 0.92)';
+  ctx.beginPath();
+  ctx.roundRect(pillX, pillY, pillW, pillH, 4);
+  ctx.fill();
+
+  // Gold border
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(197, 150, 30, 0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Text
+  ctx.fillStyle = '#2c1810';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(word, x, pillY + pillH / 2);
+
+  // Small dot at fingertip
+  ctx.fillStyle = 'rgba(192, 57, 43, 0.85)';
+  ctx.beginPath();
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Line from dot to pill
+  ctx.strokeStyle = 'rgba(192, 57, 43, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, pillY + pillH);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+async function startCamera() {
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = 'Loading MediaPipe…';
+
+  try {
+    handsInstance = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    handsInstance.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5
+    });
+
+    handsInstance.onResults(onResults);
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } }
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    document.getElementById('cameraWrapper').style.display = 'block';
+    document.getElementById('statusBar').style.display = 'block';
+    document.getElementById('quoteDisplay').style.display = 'block';
+    btn.parentElement.style.display = 'none';
+    updateQuoteDisplay();
+
+    cameraInstance = new Camera(video, {
+      onFrame: async () => {
+        await handsInstance.send({ image: video });
+      },
+      width: 1280,
+      height: 960
+    });
+
+    cameraInstance.start();
+
+  } catch (err) {
+    console.error(err);
+    btn.disabled = false;
+    btn.textContent = '⚠ Camera access needed — try again';
+    alert('Could not access your camera. Please allow camera permissions and try again.\n\nError: ' + err.message);
+  }
+}
+</script>
+
+</body>
+</html>
